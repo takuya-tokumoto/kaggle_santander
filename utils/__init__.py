@@ -1,26 +1,34 @@
 import pandas as pd
 
+def make_submission(C, Y_test,prods):
 
-def load_datasets(feats):
-    dfs = [pd.read_feather(f'features/{f}_train.feather') for f in feats]
-    X_train = pd.concat(dfs, axis=1, sort=False)
-    dfs = [pd.read_feather(f'features/{f}_test.feather') for f in feats]
-    X_test = pd.concat(dfs, axis=1, sort=False)
-    return X_train, X_test
-
-
-def load_target(target_name):
-    train = pd.read_csv('./data/input/train.csv')
-    y_train = train[target_name]
+    """
+    予測結果から提出用のcsvファイルを作成。
     
-    '''
-        新規購買件数を目的変数に追加
+    
+    Parameters
+    --------
+    C : list
+        予測対象の顧客IDリスト(ncodpers)。
         
-    '''
+    Y_test : array
+        各商品の獲得予測値。
+        
+    prods : list
+        ターゲットになる商品名リスト。
     
-    # データをコピーし, int_date 日付に1を加え lagを生成します。変数名に _prevを追加します。
-    df_lag = df.copy()
-    df_lag.columns = [col + '_prev' if col not in ['ncodpers', 'int_date'] else col for col in df.columns ]
-    df_lag['int_date'] += 
-    
-    return y_train
+    """
+    submit_file = pd.DataFrame()
+    C_list = []
+    test_preds = []
+    for ncodper, pred in zip(C, Y_test):
+        y_prods = [(y,p,ip) for y,p,ip in zip(pred, prods, range(len(prods)))]
+        y_prods = sorted(y_prods, key=lambda a: a[0], reverse=True)[:7]
+        y_prods = [p for y,p,ip in y_prods]
+        C_list.append(ncodper)
+        test_preds.append(' '.join(y_prods))
+
+    submit_file['ncodpers'] = C_list
+    submit_file['added_products'] = test_preds
+    submit_file.to_csv('./data/output/20230303_collab_sub.csv', index=False)
+
