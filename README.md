@@ -78,3 +78,6 @@ python scripts/clean.py
 ```
 python run_8th.py
 ```
+
+
+- './data/output' 配下の作成物をzip化しkaggleサイトのLate Submissionから提出  
