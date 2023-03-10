@@ -1,3 +1,22 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+import math    
+import io    
+import gc
+
+# ファイル圧縮用途
+import gzip    
+import pickle    
+import zlib    
+
+# データ、配列を扱うための基本ライブラリ
+import pandas as pd 
+import numpy as np
+
+np.random.seed(2016)
+transformers = {}
+
 # 訓練データとテストデータを1つのデータに統合するコードです。
 def clean_data(fi, fo, header, suffix):
     
@@ -39,7 +58,7 @@ def clean_data(fi, fo, header, suffix):
         fo.write("%s%s\n" % (",".join(fields), suffix))
 
 # 1つのデータとして統合するコードを実行します。まず訓練データを writeし、その次にテストデータを writeします。これ以後1つの dataframeだけを取り扱い、前処理を進めます。
-with open("../input/8th.clean.all.csv", "w") as f:
-    clean_data(open("../input/train_ver2.csv"), f, True, "")
+with open("./data/input/8th.clean.all.csv", "w") as f:
+    clean_data(open("./data/input/train_ver2.csv"), f, True, "")
     comma24 = "".join(["," for i in range(24)])
-    clean_data(open("../input/test_ver2.csv"), f, False, comma24)
+    clean_data(open("./data/input/test_ver2.csv"), f, False, comma24)

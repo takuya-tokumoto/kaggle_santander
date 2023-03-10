@@ -1,5 +1,11 @@
+#!/usr/bin/env python
+# coding: utf-8
+
 import math    
 import io    
+import argparse
+import json
+import gc
 
 # ファイル圧縮用途
 import gzip    
@@ -13,11 +19,12 @@ import numpy as np
 # カテゴリ型データを数値型データに変換する前処理ツール
 from sklearn.preprocessing import LabelEncoder
 
-import engines
-from utils import *
+from models import engines
+from utils.utils import *
 
 np.random.seed(2016)
 transformers = {}
+
 
 def assert_uniq(series, name):
     uniq = np.unique(series, return_counts=True)
@@ -149,9 +156,25 @@ def make_prev_df(train_df, step):
 
 def load_data():
     # “データ準備”で統合したデータを読み込みます。
-    fname = "../input/8th.clean.all.csv"
-    train_df = pd.read_csv(fname, dtype=dtypes)
+    fname = "./data/input/8th.clean.all.csv"
+    # train_df = pd.read_csv(fname, dtype=dtypes)
 
+    # あとで消す
+    # 学習データの件数多なのでサンプリング
+    ## 残す ncodpers をサンプリングで指定して抽出
+    tmp_df = pd.read_csv(fname, dtype=dtypes)
+    tmp_df = pd.read_csv(fname)
+    trn = tmp_df[tmp_df["fecha_dato"]!= '2016-06-28']
+    sampling_user_id = trn[trn["fecha_dato"]!= '2016-06-28'].ncodpers.sample(10000).unique()
+    trn = trn[trn['ncodpers'].isin(sampling_user_id)]
+    ## テストデータには手をつけない
+    tst = tmp_df[tmp_df["fecha_dato"]== '2016-06-28']
+    ## 学習とテストデータをunion
+    train_df = pd.DataFrame()
+    train_df = pd.concat([trn, tst], axis=0)
+    del tmp_df, trn, tst
+    gc.collect()
+    
     # productsは util.pyで定義した 24個の金融商品の名前です。
     # 欠損値を 0.0で代替し、整数型に変換します。
     for prod in products:
@@ -189,18 +212,27 @@ def join_with_prev(df, prev_df, how):
 
 def make_data():
     train_df, prev_dfs, features, prod_features = load_data()
-
+    
     for i, prev_df in enumerate(prev_dfs):
         with Timer("join train with prev%s" % (i+1)):
-            how = "inner" if i == 0 else "left"
+            # how = "inner" if i == 0 else "left"
+            how = "left"
             train_df = join_with_prev(train_df, prev_df, how=how)
+    
+    # あとで消す
+    # 24個の金融変数に対して0埋め
+    fill_col = list(products).copy()
+    for prod in products:
+        for i in [1,2,3,4,5]:
+            fill_col.append(["%s_prev%s" % (prod, i)][0])
+    train_df[fill_col].fillna(0, inplace=True)
 
     # 24個の金融変数に対して for loopをまわします。
     for prod in products:
         # [1~3], [1~5], [2~5] の3つの区間に対して標準偏差を求めます。
         for begin, end in [(1,3),(1,5),(2,5)]:
             prods = ["%s_prev%s" % (prod, i) for i in range(begin,end+1)]
-            mp_df = train_df.as_matrix(columns=prods)
+            mp_df = train_df[prods].values
             stdf = "%s_std_%s_%s" % (prod,begin,end)
 
             # np.nanstdで標準偏差を求め、featuresに新規派生変数の名前を追加します。
@@ -210,7 +242,7 @@ def make_data():
         # [2~3], [2~5] の2つの区間に対して最小値／最大値を求めます。
         for begin, end in [(2,3),(2,5)]:
             prods = ["%s_prev%s" % (prod, i) for i in range(begin,end+1)]
-            mp_df = train_df.as_matrix(columns=prods)
+            mp_df = train_df[prods].values
 
             minf = "%s_min_%s_%s"%(prod,begin,end)
             train_df[minf] = np.nanmin(mp_df, axis=1).astype(np.int8)
@@ -307,15 +339,15 @@ def train_predict(all_df, features, prod_features, str_date, cv):
 
     # テストデータから“新規購買”の正答値を抽出します。
     test_df["y"] = test_df["ncodpers"]
-    Y_prev = test_df.as_matrix(columns=prod_features)
+    Y_prev = test_df[prod_features].values
     for prod in products:
         prev = prod + "_prev1"
         padd = prod + "_add"
         # 新規購買であるかどうかを求めます。
         test_df[padd] = test_df[prod] - test_df[prev]
 
-    test_add_mat = test_df.as_matrix(columns=[prod + "_add" for prod in products])
-    C = test_df.as_matrix(columns=["ncodpers"])
+    test_add_mat = test_df[[prod + "_add" for prod in products]].values
+    C = test_df["ncodpers"].values
     test_add_list = [list() for i in range(len(C))]
     # 評価基準 MAP@7 の計算のため、顧客別新規購買正答値をtest_add_listに記録します。
     count = 0
@@ -333,8 +365,11 @@ def train_predict(all_df, features, prod_features, str_date, cv):
 
     # LightGBM モデル学習の後、予測結果を保存します。
     Y_test_lgbm = engines.lightgbm(XY_train, XY_validate, test_df, features, XY_all = XY, restore = (str_date == "2016-06-28"))
-    test_add_list_lightgbm = make_submission(io.BytesIO() if cv else gzip.open("tmp/%s.lightgbm.csv.gz" % str_date, "wb"), Y_test_lgbm - Y_prev, C)
-
+    print('Y_test_lgbm : ',Y_test_lgbm.shape)
+    # test_add_list_lightgbm = make_submission(io.BytesIO() if cv else gzip.open("tmp/%s.lightgbm.csv.gz" % str_date, "wb"), Y_test_lgbm - Y_prev, C)
+    test_add_list_lightgbm = make_submission(io.BytesIO() if cv else gzip.open("%s.lightgbm.csv.gz" % str_date, "wb"), Y_test_lgbm - Y_prev, C)
+    
+    
     # 交差検証の場合, LightGBM モデルのテストデータ MAP@7 評価基準を出力します。
     if cv:
         map7lightgbm = mapk(test_add_list, test_add_list_lightgbm, 7, 0.0)
@@ -342,7 +377,9 @@ def train_predict(all_df, features, prod_features, str_date, cv):
 
     # XGBoost モデル学習の後、予測結果を保存します。
     Y_test_xgb = engines.xgboost(XY_train, XY_validate, test_df, features, XY_all = XY, restore = (str_date == "2016-06-28"))
-    test_add_list_xgboost = make_submission(io.BytesIO() if cv else gzip.open("tmp/%s.xgboost.csv.gz" % str_date, "wb"), Y_test_xgb - Y_prev, C)
+    print('Y_test_xgb : ',Y_test_xgb.shape)
+    # test_add_list_xgboost = make_submission(io.BytesIO() if cv else gzip.open("tmp/%s.xgboost.csv.gz" % str_date, "wb"), Y_test_xgb - Y_prev, C)
+    test_add_list_xgboost = make_submission(io.BytesIO() if cv else gzip.open("%s.xgboost.csv.gz" % str_date, "wb"), Y_test_xgb - Y_prev, C)
 
     # 交差検証の場合, XGBoost モデルのテストデータ MAP@7 評価基準を出力します。
     if cv:
@@ -352,22 +389,29 @@ def train_predict(all_df, features, prod_features, str_date, cv):
     # 平方した後、平行根を求めるやり方でアンサンブルを遂行します。
     Y_test = np.sqrt(np.multiply(Y_test_xgb, Y_test_lgbm))
     # アンサンブルの結果を保存し、テストデータに対する MAP@7 を出力します。
-    test_add_list_xl = make_submission(io.BytesIO() if cv else gzip.open("tmp/%s.xgboost-lightgbm.csv.gz" % str_date, "wb"), Y_test - Y_prev, C)
+    # test_add_list_xl = make_submission(io.BytesIO() if cv else gzip.open("tmp/%s.xgboost-lightgbm.csv.gz" % str_date, "wb"), Y_test - Y_prev, C)
+    print('Y_test : ',Y_test.shape)
+    test_add_list_xl = make_submission(io.BytesIO() if cv else gzip.open("%s.xgboost-lightgbm.csv.gz" % str_date, "wb"), Y_test - Y_prev, C)
 
     # 正答値の test_add_listとアンサンブルモデルの予測値を mapk 関数に入れて、評価基準の点数を確認します。
     if cv:
         map7xl = mapk(test_add_list, test_add_list_xl, 7, 0.0)
         print("XGBoost+LightGBM MAP@7", str_date, map7xl, map7xl*map7coef)
 
-
-
-
 if __name__ == "__main__":
-    all_df, features, prod_features = make_data()
-    
-    # 特徴量エンジニアリングが完了したデータを保存します。
-    train_df.to_pickle("../data/input/8th.feature_engineer.all.pkl")
-    pickle.dump((features, prod_features), open("../data/input/8th.feature_engineer.cv_meta.pkl", "wb"))
 
-    train_predict(all_df, features, prod_features, "2016-05-28", cv=True)
-    train_predict(all_df, features, prod_features, "2016-06-28", cv=False)
+    # 予測対象の商品名を取得
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--config', default='./configs/default.json')
+    options = parser.parse_args([])
+    config = json.load(open(options.config))
+    products = config['target']
+
+    all_df, features, prod_features = make_data()
+
+    # 特徴量エンジニアリングが完了したデータを保存します。
+    all_df.to_pickle("./data/input/8th.feature_engineer.all.pkl")
+    pickle.dump((features, prod_features), open("./data/input/8th.feature_engineer.cv_meta.pkl", "wb"))
+    
+    train_predict(all_df, list(features), list(products), "2016-05-28", cv=True)
+    train_predict(all_df, list(features), list(products), "2016-06-28", cv=False)

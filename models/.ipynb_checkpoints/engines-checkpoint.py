@@ -23,7 +23,7 @@ def xgboost(XY_train, XY_validate, test_df, features, XY_all=None, restore=False
         'eval_metric': 'mlogloss',
         'colsample_bytree': 0.8,
         'colsample_bylevel': 0.9,
-        'num_class': len(products),
+        'num_class': 24,
     }
 
     if not restore:
